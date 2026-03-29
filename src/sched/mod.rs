@@ -167,11 +167,7 @@ pub fn insert_task_cross_cpu(task: Box<OwnedTask>) {
 pub struct SchedState {
     run_q: RunQueue,
     wait_q: BTreeMap<TaskDescriptor, Box<SchedulableTask>>,
-    /// Per-CPU virtual clock (fixed-point 65.63 stored in a u128).
-    /// Expressed in virtual-time units as defined by the EEVDF paper.
-    vclock: u128,
-    /// Real-time moment when `vclock` was last updated.
-    last_update: Option<Instant>,
+    // removed: vclock, last_update
     /// Force a reschedule.
     force_resched: bool,
 }
@@ -183,8 +179,6 @@ impl SchedState {
         Self {
             run_q: RunQueue::new(),
             wait_q: BTreeMap::new(),
-            vclock: 0,
-            last_update: None,
             force_resched: false,
         }
     }
@@ -250,38 +244,18 @@ impl SchedState {
     /// virtual-time units:
     ///     v += (delta t << VT_FIXED_SHIFT) /  sum w
     /// The caller must pass the current real time (`now_inst`).
-    fn advance_vclock(&mut self, now_inst: Instant) {
-        if let Some(prev) = self.last_update {
-            let delta_real = now_inst - prev;
-            if self.run_q.weight() > 0 {
-                let delta_vt =
-                    ((delta_real.as_nanos()) << VT_FIXED_SHIFT) / self.run_q.weight() as u128;
-                self.vclock = self.vclock.saturating_add(delta_vt);
-            }
-        }
-        self.last_update = Some(now_inst);
-    }
 
     fn insert_into_runq(&mut self, mut new_task: Box<SchedulableTask>) {
-        let now = now().expect("systimer not running");
-
-        self.advance_vclock(now);
-
-        new_task.inserting_into_runqueue(self.vclock);
-
         if let Some(current) = self.run_q.current() {
-            // We force a reschedule if:
-            //
-            // We are currently idling, OR The new task has an earlier deadline
-            // than the current task.
-            if current.is_idle_task() || new_task.v_deadline < current.v_deadline {
+            // RR: force reschedule only if we're currently idling
+            if current.is_idle_task() {
                 self.force_resched = true;
             }
         }
 
         self.run_q.enqueue_task(new_task);
-
         self.update_global_least_tasked_cpu_info();
+        // Note: no advance_vclock or inserting_into_runqueue needed for RR
     }
 
     pub fn wakeup(&mut self, desc: TaskDescriptor) {
@@ -300,8 +274,6 @@ impl SchedState {
         self.update_global_least_tasked_cpu_info();
         // Update Clocks
         let now_inst = now().expect("System timer not initialised");
-
-        self.advance_vclock(now_inst);
 
         let mut needs_resched = self.force_resched;
 
@@ -335,7 +307,7 @@ impl SchedState {
         self.force_resched = false;
 
         // Select Next Task.
-        let next_task_desc = self.run_q.find_next_runnable_desc(self.vclock);
+        let next_task_desc = self.run_q.find_next_runnable_desc(); // no vlock, just next
 
         match self.run_q.switch_tasks(next_task_desc, now_inst) {
             SwitchResult::AlreadyRunning => {

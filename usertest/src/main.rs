@@ -8,6 +8,7 @@ use std::{
 mod fs;
 mod futex;
 mod signals;
+mod sched;
 
 pub struct Test {
     pub test_text: &'static str,
@@ -232,6 +233,24 @@ fn main() {
     println!("Running userspace tests ...");
     let start = std::time::Instant::now();
     let mut failures = 0;
+
+    // Scheduler benchmark runs first, called directly to avoid
+    // inventory dead-code elimination dropping the module
+    print!("scheduler::benchmark ...");
+    let _ = stdout().flush();
+    match run_test(sched::test_scheduler_benchmark) {
+        Ok(()) => println!("{}", " OK".green()),
+        Err(code) => {
+            println!(" {}", "FAILED".red());
+            eprintln!(
+                "Test 'scheduler::benchmark' failed with exit code {}",
+                code
+            );
+            failures += 1;
+        }
+    }
+
+
     for test in inventory::iter::<Test> {
         print!("{} ...", test.test_text);
         let _ = stdout().flush();
