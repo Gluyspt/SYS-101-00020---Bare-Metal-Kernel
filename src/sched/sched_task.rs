@@ -59,35 +59,20 @@ impl SchedulableTask {
         self.v_deadline = self.v_eligible + v_delta;
     }
 
-    /// Update accounting info for this task given the latest time. Returns
-    /// `true` when we should try to reschedule another task, `false` otherwise.
+    // Task level 1
+    /// RR version of tick — simply checks if the task has used its full time slice.
+    /// Returns `true` when we should reschedule.
     pub fn tick(&mut self, now: Instant) -> bool {
-        let dv_increment = if let Some(start) = self.exec_start {
-            let delta = now - start;
-            let w = self.weight() as u128;
-            ((delta.as_nanos()) << VT_FIXED_SHIFT) / w
+        if let Some(start) = self.exec_start {
+            let elapsed = now - start;
+            if elapsed >= DEFAULT_TIME_SLICE {
+                self.exec_start = Some(now);  // reset the slice baseline
+                return true;                  // time slice expired, time to rotate
+            }
         } else {
-            0
-        };
-
-        self.v_runtime = self.v_runtime.saturating_add(dv_increment);
-
-        // Advance its eligible time by the virtual run time it just used
-        // (EEVDF: v_ei += t_used / w_i).
-        self.v_eligible = self.v_eligible.saturating_add(dv_increment);
-
-        self.exec_start = Some(now);
-
-        // Has the task exceeded its deadline?
-        if self.v_eligible >= self.v_deadline {
-            self.replenish_deadline();
-
-            true
-        } else {
-            // Task still has budget. Do nothing. Return to userspace
-            // immediately.
-            false
+            self.exec_start = Some(now);
         }
+        false
     }
 
     /// Compute this task's scheduling weight.

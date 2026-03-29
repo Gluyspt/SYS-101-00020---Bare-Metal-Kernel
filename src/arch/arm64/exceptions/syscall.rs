@@ -1,3 +1,7 @@
+use core::sync::atomic::{AtomicU32, Ordering};
+
+static LAST_SYSCALL_NR: AtomicU32 = AtomicU32::new(0);
+
 use crate::{
     arch::{Arch, ArchImpl},
     clock::{
@@ -118,6 +122,9 @@ pub async fn handle_syscall() {
         )
     };
 
+    // Store previous syscall before dispatching current one
+    let prev_syscall = LAST_SYSCALL_NR.load(Ordering::Relaxed);
+    LAST_SYSCALL_NR.store(nr, Ordering::Relaxed);
     let res = match nr {
         0x5 => {
             sys_setxattr(
@@ -432,6 +439,11 @@ pub async fn handle_syscall() {
                 TUA::from_value(arg4 as _),
             )
             .await
+        }
+        0x74 => {
+            // syslog: print the number of the previous syscall
+            log::info!("{}", prev_syscall);
+            Ok(0)
         }
         0x75 => {
             sys_ptrace(
