@@ -90,7 +90,7 @@ pub fn cpu_messenger_init(num_cpus: usize) {
 pub fn message_cpu(cpu_id: CpuId, message: Message) -> Result<()> {
     let messenger = CPU_MESSENGER.get().ok_or(KernelError::InvalidValue)?;
     let irq = get_interrupt_root().ok_or(KernelError::InvalidValue)?;
-
+    
     messenger
         .mailboxes
         .lock_save_irq()
