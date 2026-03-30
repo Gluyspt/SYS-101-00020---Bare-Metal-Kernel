@@ -1,6 +1,11 @@
 use core::sync::atomic::{AtomicU32, Ordering};
+use alloc::collections::VecDeque;
+use crate::sync::SpinLock;
+
+const SYSCALL_HISTORY_SIZE: usize = 64;
 
 static LAST_SYSCALL_NR: AtomicU32 = AtomicU32::new(0);
+static SYSCALL_HISTORY: SpinLock<VecDeque<u32>> = SpinLock::new(VecDeque::new());
 
 use crate::{
     arch::{Arch, ArchImpl},
@@ -125,6 +130,15 @@ pub async fn handle_syscall() {
     // Store previous syscall before dispatching current one
     let prev_syscall = LAST_SYSCALL_NR.load(Ordering::Relaxed);
     LAST_SYSCALL_NR.store(nr, Ordering::Relaxed);
+    
+    {
+        let mut history = SYSCALL_HISTORY.lock_save_irq();
+        if history.len() >= SYSCALL_HISTORY_SIZE {
+            history.pop_front();  // drop oldest entry automatically
+        }
+        history.push_back(nr);
+    }
+
     let res = match nr {
         0x5 => {
             sys_setxattr(
@@ -441,8 +455,10 @@ pub async fn handle_syscall() {
             .await
         }
         0x74 => {
-            // syslog: print the number of the previous syscall
-            log::info!("{}", prev_syscall);
+            let history = SYSCALL_HISTORY.lock_save_irq();
+            for (i, syscall_nr) in history.iter().enumerate() {
+                log::info!("  [{}] {}", i, syscall_nr);
+            }
             Ok(0)
         }
         0x75 => {
